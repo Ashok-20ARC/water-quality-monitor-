@@ -1,0 +1,175 @@
+{% extends 'app/base.html' %}
+
+{% block content %}
+
+{% if user.is_authenticated %}
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+    
+    <!-- Left Column: Upload and Latest Result -->
+    <div class="lg:col-span-1 space-y-8">
+        <!-- Image Upload Card -->
+        <div class="bg-white p-6 rounded-lg shadow-md">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4">Analyze New Sample</h2>
+            <form method="post" enctype="multipart/form-data" id="upload-form">
+                {% csrf_token %}
+                <div class="space-y-4">
+                    {{ form.image }}
+                    <button type="submit" id="submit-btn" class="w-full bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition duration-300">
+                        Start Analysis
+                    </button>
+                    <div id="loading-indicator" class="hidden text-center text-blue-600 font-medium">
+                        <svg class="animate-spin h-5 w-5 mr-3 inline-block" viewBox="0 0 24 24"></svg>
+                        Processing...
+                    </div>
+                </div>
+            </form>
+        </div>
+        
+        <!-- Latest Result Card -->
+        {% if latest_result %}
+        <div class="bg-white p-6 rounded-lg shadow-md">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">Most Recent Analysis</h3>
+            <div class="flex items-center space-x-4">
+                <img src="{{ latest_result.image.url }}" alt="Water Sample" class="w-24 h-24 object-cover rounded-lg">
+                <div>
+                    <p class="text-sm text-gray-500">{{ latest_result.timestamp|date:"F d, Y, P" }}</p>
+                    <p class="text-4xl font-bold text-blue-600">{{ latest_result.wqi_score|floatformat:2 }}</p>
+                    <p class="text-gray-600 font-semibold">Water Quality Index</p>
+                </div>
+            </div>
+            <div class="mt-4 grid grid-cols-2 gap-2 text-sm">
+                <p><span class="font-semibold text-gray-700">Clarity:</span> {{ latest_result.clarity_score|floatformat:2 }}</p>
+                <p><span class="font-semibold text-gray-700">pH:</span> {{ latest_result.ph }}</p>
+                <p><span class="font-semibold text-gray-700">Temp:</span> {{ latest_result.temperature }} °C</p>
+                <p><span class="font-semibold text-gray-700">DO:</span> {{ latest_result.dissolved_oxygen }} mg/L</p>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Right Column: Stats and History -->
+    <div class="lg:col-span-2 space-y-8">
+        <!-- Charts Card -->
+        <div class="bg-white p-6 rounded-lg shadow-md">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4">Statistics</h2>
+            {% if chart_data_json != '{}' %}
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-8">
+                <div>
+                    <h3 class="font-semibold text-gray-700 mb-2">WQI Trend Over Time</h3>
+                    <canvas id="wqiChart"></canvas>
+                </div>
+                <div>
+                    <h3 class="font-semibold text-gray-700 mb-2">Average Sensor Readings</h3>
+                    <canvas id="sensorChart"></canvas>
+                </div>
+            </div>
+            {% else %}
+            <p class="text-center text-gray-500 py-8">Upload a sample to see your statistics.</p>
+            {% endif %}
+        </div>
+
+        <!-- Recent History Card -->
+        <div class="bg-white p-6 rounded-lg shadow-md">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-2xl font-bold text-gray-800">Recent History</h2>
+                <a href="{% url 'history' %}" class="text-blue-600 hover:underline font-medium">View All</a>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">WQI</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        {% for analysis in recent_analyses %}
+                        <tr>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600">{{ analysis.timestamp|date:"M d, Y" }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm font-bold text-gray-800">{{ analysis.wqi_score|floatformat:2 }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap">
+                                {% if analysis.wqi_score >= 85 %}
+                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Excellent</span>
+                                {% elif analysis.wqi_score >= 70 %}
+                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">Good</span>
+                                {% elif analysis.wqi_score >= 50 %}
+                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">Fair</span>
+                                {% else %}
+                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">Poor</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="3" class="text-center py-4 text-gray-500">No analyses yet.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const chartData = JSON.parse('{{ chart_data_json|safe }}');
+
+    if (Object.keys(chartData).length > 0) {
+        // WQI Trend Chart
+        const wqiCtx = document.getElementById('wqiChart').getContext('2d');
+        new Chart(wqiCtx, {
+            type: 'line',
+            data: {
+                labels: chartData.wqiLabels,
+                datasets: [{
+                    label: 'WQI Score',
+                    data: chartData.wqiValues,
+                    borderColor: 'rgb(59, 130, 246)',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: { scales: { y: { beginAtZero: true, max: 100 } } }
+        });
+
+        // Sensor Radar Chart
+        const sensorCtx = document.getElementById('sensorChart').getContext('2d');
+        new Chart(sensorCtx, {
+            type: 'radar',
+            data: {
+                labels: chartData.sensorLabels,
+                datasets: [{
+                    label: 'Average Value',
+                    data: chartData.sensorValues,
+                    backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                    borderColor: 'rgb(59, 130, 246)',
+                    pointBackgroundColor: 'rgb(59, 130, 246)',
+                }]
+            },
+            options: {
+                elements: { line: { borderWidth: 3 } }
+            }
+        });
+    }
+
+    // Loading indicator on form submit
+    document.getElementById('upload-form').addEventListener('submit', function() {
+        document.getElementById('submit-btn').classList.add('hidden');
+        document.getElementById('loading-indicator').classList.remove('hidden');
+    });
+</script>
+
+{% else %}
+<div class="text-center py-16">
+    <h1 class="text-4xl font-bold text-gray-800">Welcome to AquaView</h1>
+    <p class="mt-4 text-lg text-gray-600">Your AI-powered assistant for water quality monitoring.</p>
+    <div class="mt-8">
+        <a href="{% url 'register' %}" class="bg-blue-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-blue-700 transition duration-300">Get Started</a>
+        <a href="{% url 'login' %}" class="ml-4 text-blue-600 font-bold py-3 px-6">Login</a>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}
